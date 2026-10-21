@@ -1,0 +1,5 @@
+node_modules/
+*.tmp-*
+.DS_Store
+*.tgz
+# 注意：lib/ 构建产物需要提交（插件市场核对「重新构建的 lib/ 与提交里的 lib/ 逐字节一致」）

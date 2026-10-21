@@ -1,0 +1,104 @@
+/**
+ * 打包：分镜文档 + 参考图 → 灵环 TV 一次就能导入的 zip。
+ *
+ * 包内结构（灵环「导入分镜与参考素材」按这个认）：
+ *   <分镜文档>.md
+ *   参考图/角色/<名称>.<扩展名>
+ *   参考图/场景/<名称>.<扩展名>
+ *   参考图/道具/<名称>.<扩展名>
+ * 每张图按它在分镜里的「名称」重新命名 —— 平台按文件名精确配对最稳（包含关系有歧义时会配不上）；
+ * 几个名称共用一张图时各存一份，保证每个名称都配得上。
+ * @module dsh-tool-aura-batch/pack
+ */
+import { readFileSync } from 'node:fs'
+import { extname } from 'node:path'
+import { checkStoryboard, classifyRef, KIND_LABEL, matchImage, type AssetKind, type CheckResult } from './format.js'
+import { isLandscape, type LocalImage } from './images.js'
+import type { ZipEntry } from './zip.js'
+
+export interface PackAsset {
+  /** 分镜里「图N：名称」的名称 */
+  name: string
+  /** 图片的绝对路径 */
+  abs: string
+  kind?: AssetKind
+}
+
+export interface PackInput {
+  storyboardText: string
+  /** 包内分镜文档的文件名（.md） */
+  storyboardName: string
+  /** 参考图目录里列出来的图 */
+  images: readonly LocalImage[]
+  /** 显式指定：某个名称用哪张图、归哪一类（优先于按名字自动配） */
+  assets?: readonly PackAsset[]
+}
+
+export interface Placed {
+  name: string
+  kind: AssetKind
+  /** 来源图片（绝对路径） */
+  from: string
+  /** 包内路径 */
+  to: string
+}
+
+export interface PackResult {
+  entries: ZipEntry[]
+  check: CheckResult
+  placed: Placed[]
+  missing: string[]
+  warnings: string[]
+}
+
+/* 文件名里不能出现的字符；名称里有这些字就改成全角，平台配对会退到「包含关系」，打包时提醒 */
+const UNSAFE = /[\\/:*?"<>|\u0000-\u001f]/g
+const safeName = (name: string) => name.replace(UNSAFE, '＿').replace(/^\.+/, '').trim() || '未命名'
+
+export function buildPackage(input: PackInput, read: (abs: string) => Buffer = (p) => readFileSync(p)): PackResult {
+  const landscape = new Map<string, boolean | undefined>()
+  const landscapeOf = (img: { abs?: string; path: string }) => {
+    const key = img.abs ?? img.path
+    if (!landscape.has(key)) landscape.set(key, img.abs ? isLandscape(img.abs) : undefined)
+    return landscape.get(key)
+  }
+  const check = checkStoryboard(input.storyboardText, input.images, (img) => landscapeOf(img as LocalImage))
+  const warnings: string[] = []
+  const explicit = new Map((input.assets ?? []).map((a) => [a.name.trim(), a]))
+  for (const a of input.assets ?? []) {
+    if (!check.names.some((n) => n.name === a.name.trim())) warnings.push(`指定了「${a.name}」的图，但分镜里没有「图N：${a.name}」，没有打进包`)
+  }
+
+  const placed: Placed[] = []
+  const missing: string[] = []
+  const used = new Set<string>()
+  for (const n of check.names) {
+    const ex = explicit.get(n.name)
+    const auto = ex ? undefined : matchImage(n.name, input.images)
+    const from = ex?.abs ?? auto?.abs
+    if (!from) { missing.push(n.name); continue }
+    const kind = ex?.kind ?? (ex
+      ? classifyRef({ name: n.name, line: n.line, ...(landscapeOf({ abs: ex.abs, path: ex.abs }) !== undefined ? { landscape: landscapeOf({ abs: ex.abs, path: ex.abs })! } : {}) })
+      : n.kind)
+    const file = safeName(n.name)
+    if (file !== n.name) warnings.push(`名称「${n.name}」里有不能做文件名的字符，图片存成「${file}」，导入时可能要手动配图`)
+    let to = `参考图/${KIND_LABEL[kind]}/${file}${extname(from).toLowerCase() || '.png'}`
+    for (let i = 2; used.has(to); i++) to = `参考图/${KIND_LABEL[kind]}/${file}（${i}）${extname(from).toLowerCase() || '.png'}`
+    used.add(to)
+    placed.push({ name: n.name, kind, from, to })
+  }
+
+  const docName = /\.(md|markdown|txt)$/i.test(input.storyboardName) ? input.storyboardName : `${input.storyboardName}.md`
+  const entries: ZipEntry[] = [
+    { path: safeName(docName), data: Buffer.from(input.storyboardText.replace(/^\uFEFF/, ''), 'utf8') },
+    ...placed.map((p) => ({ path: p.to, data: read(p.from) })),
+  ]
+
+  /* 打完再按平台规则核一遍：每个名称在包里配到的必须正是放给它的那张 */
+  const packed = placed.map((p) => ({ file: p.to.split('/').pop()!, path: p.to }))
+  for (const p of placed) {
+    const hit = matchImage(p.name, packed)
+    if (hit?.path !== p.to) warnings.push(`「${p.name}」在包里会配到 ${hit?.path ?? '（配不上）'}，不是 ${p.to}，导入后请核对`)
+  }
+  return { entries, check, placed, missing, warnings }
+}
