@@ -65,3 +65,12 @@ test('整份检查：丢掉的开头、缺画幅、未登记的图N、配图与�
   assert.equal(parseStoryboard('').groups.length, 0)
   assert.equal(checkStoryboard('').ok, false)
 })
+
+test('检查结果写明：没写时长 / 画幅的组，批量生成会按 5 秒 / 16:9 出（平台按每组自己的时长与画幅出片）', async () => {
+  const { renderCheck } = await import('../lib/tools.js')
+  const text = renderCheck(checkStoryboard('第1组 有时长没画幅\n时长：12秒。\n正文\n\n第2组 都写了\n时长：10秒。\n画幅：9:16竖屏。\n正文'), false)
+  assert.match(text, /第 1 组没写画幅.*按 16:9 出/)
+  assert.doesNotMatch(text, /没写时长/)
+  assert.match(text, /1\. .*｜12s｜缺画幅（按 16:9 出）/)
+  assert.match(text, /2\. .*｜10s｜9:16/)
+})
