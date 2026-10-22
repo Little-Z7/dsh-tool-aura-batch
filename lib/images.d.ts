@@ -1,5 +1,7 @@
 import type { ImageRef } from './format.js';
 export declare const IMAGE_EXT: RegExp;
+/** 参考文件：图片之外也收视频与音频（灵环全能参考可带参考视频、参考音频；分镜里写「视频N / 音频N」） */
+export declare const MEDIA_EXT: RegExp;
 export interface LocalImage extends ImageRef {
     /** 绝对路径 */
     abs: string;

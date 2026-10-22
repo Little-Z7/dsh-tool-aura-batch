@@ -12,7 +12,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { extname } from 'node:path'
-import { checkStoryboard, classifyRef, KIND_LABEL, matchImage, type AssetKind, type CheckResult } from './format.js'
+import { checkStoryboard, classifyRef, KIND_LABEL, matchImage, mediaOfFile, type AssetKind, type CheckResult } from './format.js'
 import { isLandscape, type LocalImage } from './images.js'
 import type { ZipEntry } from './zip.js'
 
@@ -74,7 +74,8 @@ export function buildPackage(input: PackInput, read: (abs: string) => Buffer = (
   const used = new Set<string>()
   for (const n of check.names) {
     const ex = explicit.get(n.name)
-    const auto = ex ? undefined : matchImage(n.name, input.images)
+    /* 图片名称只配图片、音频名称只配音频（「程野.png」与「程野.mp3」各归各的） */
+    const auto = ex ? undefined : matchImage(n.name, input.images.filter((i) => mediaOfFile(i.file) === (n.media ?? 'image')))
     const from = ex?.abs ?? auto?.abs
     if (!from) { missing.push(n.name); continue }
     const kind = ex?.kind ?? (ex
@@ -97,7 +98,7 @@ export function buildPackage(input: PackInput, read: (abs: string) => Buffer = (
   /* 打完再按平台规则核一遍：每个名称在包里配到的必须正是放给它的那张 */
   const packed = placed.map((p) => ({ file: p.to.split('/').pop()!, path: p.to }))
   for (const p of placed) {
-    const hit = matchImage(p.name, packed)
+    const hit = matchImage(p.name, packed.filter((x) => mediaOfFile(x.file) === mediaOfFile(p.to)))
     if (hit?.path !== p.to) warnings.push(`「${p.name}」在包里会配到 ${hit?.path ?? '（配不上）'}，不是 ${p.to}，导入后请核对`)
   }
   return { entries, check, placed, missing, warnings }

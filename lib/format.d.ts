@@ -29,11 +29,15 @@ export type SplitBy = 'marker' | 'separator' | 'section' | 'single';
 export type AssetKind = 'roles' | 'scenes' | 'props';
 export declare const KIND_LABEL: Record<AssetKind, string>;
 export interface RefSlot {
-    /** 图N 的 N（1 起） */
+    /** 图N / 视频N / 音频N 的 N（1 起；三种各自编号） */
     slot: number;
     /** 「图N：名称，……」里的名称 */
     name: string;
+    /** 缺省 = 图片；「视频N：…」「音频N：…」登记的是参考视频 / 参考音频（与灵环平台同一规则） */
+    media?: 'video' | 'audio';
 }
+/** 参考文件的媒体类型（按扩展名）：「图N」只配图片、「视频N」只配视频、「音频N」只配音频 */
+export declare function mediaOfFile(file: string): 'image' | 'video' | 'audio';
 export interface Group {
     index: number;
     title: string;
@@ -87,7 +91,7 @@ export interface ImageRef {
 /** 名称 → 参考图：先按文件名配；配不上再按所在文件夹名（「艾莲娜/正面.png」配「艾莲娜」，取排在最前的一张） */
 export declare function matchImage<T extends ImageRef>(name: string, images: readonly T[]): T | undefined;
 /** 「图N：…」那一整行（冒号后面的全部），找不到给空串 */
-export declare function refLine(prompt: string, slot: number): string;
+export declare function refLine(prompt: string, slot: number, media?: 'image' | 'video' | 'audio'): string;
 /** 参考图归角色、场景还是道具：文件夹名 → 名称结尾 → 描述用词 → 横竖（横图算场景）；与平台导入时同一套判断 */
 export declare function classifyRef(ref: {
     name: string;
@@ -128,6 +132,7 @@ export interface CheckResult {
         line: string;
         image?: string;
         kind: AssetKind;
+        media?: 'video' | 'audio';
     }>;
     /** 提供了参考图目录、但配不上图的名称 */
     missing: string[];

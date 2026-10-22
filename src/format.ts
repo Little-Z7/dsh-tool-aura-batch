@@ -24,10 +24,19 @@ export type AssetKind = 'roles' | 'scenes' | 'props'
 export const KIND_LABEL: Record<AssetKind, string> = { roles: '角色', scenes: '场景', props: '道具' }
 
 export interface RefSlot {
-  /** 图N 的 N（1 起） */
+  /** 图N / 视频N / 音频N 的 N（1 起；三种各自编号） */
   slot: number
   /** 「图N：名称，……」里的名称 */
   name: string
+  /** 缺省 = 图片；「视频N：…」「音频N：…」登记的是参考视频 / 参考音频（与灵环平台同一规则） */
+  media?: 'video' | 'audio'
+}
+
+/** 参考文件的媒体类型（按扩展名）：「图N」只配图片、「视频N」只配视频、「音频N」只配音频 */
+export function mediaOfFile(file: string): 'image' | 'video' | 'audio' {
+  if (/\.(mp4|mov|m4v|webm)$/i.test(file)) return 'video'
+  if (/\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file)) return 'audio'
+  return 'image'
 }
 
 export interface Group {
@@ -147,15 +156,18 @@ export function extractMeta(prompt: string): { duration?: string; ratio?: string
     const orient = /画幅\s*[：:][^\n]*?(横屏|竖屏)/.exec(prompt)
     if (orient) out.ratio = orient[1] === '横屏' ? '16:9' : '9:16'
   }
-  const seen = new Set<number>()
-  for (const m of prompt.matchAll(/^[ \t]*图\s*(\d{1,2})\s*[：:]\s*(.+)$/gmu)) {
-    const slot = Number(m[1])
-    if (seen.has(slot)) continue
-    seen.add(slot)
-    const name = m[2]!.split(/[，,、；;。]/u)[0]!.trim().slice(0, 40)
-    if (name) out.refs.push({ slot, name })
+  const seen = new Set<string>()
+  for (const m of prompt.matchAll(/^[ \t]*(图|视频|音频)\s*(\d{1,2})\s*[：:]\s*(.+)$/gmu)) {
+    const kind = m[1] === '视频' ? 'video' as const : m[1] === '音频' ? 'audio' as const : undefined
+    const slot = Number(m[2])
+    const key = `${kind ?? 'image'}:${slot}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const name = m[3]!.split(/[，,、；;。]/u)[0]!.trim().slice(0, 40)
+    if (name) out.refs.push({ slot, name, ...(kind ? { media: kind } : {}) })
   }
-  out.refs.sort((a, b) => a.slot - b.slot)
+  const rank = (r: RefSlot) => (r.media === 'video' ? 1 : r.media === 'audio' ? 2 : 0)
+  out.refs.sort((a, b) => rank(a) - rank(b) || a.slot - b.slot)
   return out
 }
 
@@ -239,8 +251,9 @@ export function matchImage<T extends ImageRef>(name: string, images: readonly T[
 /* ───────────────────────── 角色 / 场景 / 道具 ───────────────────────── */
 
 /** 「图N：…」那一整行（冒号后面的全部），找不到给空串 */
-export function refLine(prompt: string, slot: number): string {
-  const m = new RegExp(`^[ \\t]*图\\s*${slot}\\s*[：:]\\s*(.+)$`, 'mu').exec(prompt)
+export function refLine(prompt: string, slot: number, media: 'image' | 'video' | 'audio' = 'image'): string {
+  const word = media === 'video' ? '视频' : media === 'audio' ? '音频' : '图'
+  const m = new RegExp(`^[ \\t]*${word}\\s*${slot}\\s*[：:]\\s*(.+)$`, 'mu').exec(prompt)
   return m ? m[1]!.trim() : ''
 }
 
@@ -331,7 +344,7 @@ export interface CheckResult {
   splitBy: SplitBy
   groups: CheckedGroup[]
   /** 全集的参考名称（出现顺序） */
-  names: Array<{ name: string; line: string; image?: string; kind: AssetKind }>
+  names: Array<{ name: string; line: string; image?: string; kind: AssetKind; media?: 'video' | 'audio' }>
   /** 提供了参考图目录、但配不上图的名称 */
   missing: string[]
   /** 整份文件层面的提醒 */
@@ -361,15 +374,22 @@ export function checkStoryboard(
     const issues = [...g.issues]
     if (!g.duration) issues.push('没写时长（在【N秒本组总控】里写「时长：N秒。」），导入后要在分镜表里补')
     if (!g.ratio) issues.push('没写画幅（写「画幅：16:9横屏」或「画幅：9:16竖屏」）')
-    if (g.refs.length > MAX_SHOT_REFS) issues.push(`参考图有 ${g.refs.length} 个，平台每个镜头只挂前 ${MAX_SHOT_REFS} 个`)
-    const declared = new Set(g.refs.map((r) => r.slot))
+    if (g.refs.length > MAX_SHOT_REFS) issues.push(`参考（图片 / 视频 / 音频合计）有 ${g.refs.length} 个，平台每个镜头只挂前 ${MAX_SHOT_REFS} 个`)
+    const declared = new Set(g.refs.filter((r) => !r.media).map((r) => r.slot))
     const undeclared = mentionedSlots(g.prompt).filter((s) => !declared.has(s))
     if (undeclared.length) issues.push(`正文提到 ${undeclared.map((s) => `图${s}`).join('、')}，但【参考素材分工】里没有「图N：名称」那一行，这些不会挂参考`)
     const refs = g.refs.map((r): CheckedRef => {
-      const line = refLine(g.prompt, r.slot)
-      const image = images ? matchImage(r.name, images) : undefined
-      const kind = classifyRef({ name: r.name, line, ...(image ? { path: image.path } : {}), ...(image && landscapeOf?.(image) !== undefined ? { landscape: landscapeOf(image)! } : {}) })
-      if (!names.some((n) => n.name === r.name)) names.push({ name: r.name, line, ...(image ? { image: image.path } : {}), kind })
+      const media = r.media ?? 'image'
+      const line = refLine(g.prompt, r.slot, media)
+      const pool = images?.filter((i) => mediaOfFile(i.file) === media)
+      const image = pool ? matchImage(r.name, pool) : undefined
+      /* 音频与某个角色同名 = 这个角色的声音参考（平台导入后挂到角色上）；其余音频算道具一类 */
+      const kind = r.media === 'audio'
+        ? (names.some((n) => n.name === r.name && !n.media && n.kind === 'roles') ? 'roles' as const : 'props' as const)
+        : classifyRef({ name: r.name, line, ...(image ? { path: image.path } : {}), ...(image && media === 'image' && landscapeOf?.(image) !== undefined ? { landscape: landscapeOf(image)! } : {}) })
+      if (!names.some((n) => n.name === r.name && (n.media ?? 'image') === media)) {
+        names.push({ name: r.name, line, ...(image ? { image: image.path } : {}), kind, ...(r.media ? { media: r.media } : {}) })
+      }
       return { ...r, ...(image ? { image: image.path } : {}), kind }
     })
     const cols = sectionsOf(g.prompt)

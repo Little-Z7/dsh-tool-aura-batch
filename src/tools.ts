@@ -56,7 +56,7 @@ export function renderCheck(r: CheckResult, withImages: boolean): string {
   if (noRatio.length) lines.push(`⚠ 第 ${noRatio.join('、')} 组没写画幅（「画幅：16:9横屏。」或「9:16竖屏」），批量生成会按 16:9 出`)
   if (withImages && r.missing.length) lines.push(`⚠ 缺图：${r.missing.join('、')}（参考图文件名要与名称一致，或在 aura_batch_pack 的 assets 里指定）`)
   for (const g of r.groups) {
-    const refs = g.refs.map((x) => `图${x.slot}${x.name}${withImages ? (x.image ? `→${x.image}` : '（缺图）') : ''}·${KIND_LABEL[x.kind]}`).join('，')
+    const refs = g.refs.map((x) => `${x.media === 'video' ? '视频' : x.media === 'audio' ? '音频' : '图'}${x.slot}${x.name}${withImages ? (x.image ? `→${x.image}` : '（缺文件）') : ''}·${KIND_LABEL[x.kind]}`).join('，')
     const cols = g.columns.map((c) => `${c.label}${c.truncated ? `（${c.chars} 字，表格里截断）` : ''}`).join('、')
     lines.push(`${g.index}. ${g.title}｜${g.duration ?? '缺时长（按 5 秒出）'}｜${g.ratio ?? '缺画幅（按 16:9 出）'}${refs ? `｜${refs}` : ''}${cols ? `｜填表：${cols}` : ''}`)
     for (const i of g.issues) lines.push(`   - ${i}`)

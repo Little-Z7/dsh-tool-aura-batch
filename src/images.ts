@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import type { ImageRef } from './format.js'
 
 export const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp)$/i
+/** 参考文件：图片之外也收视频与音频（灵环全能参考可带参考视频、参考音频；分镜里写「视频N / 音频N」） */
+export const MEDIA_EXT = /\.(png|jpe?g|webp|gif|bmp|mp4|mov|m4v|webm|mp3|wav|m4a|aac|ogg|flac)$/i
 
 export interface LocalImage extends ImageRef {
   /** 绝对路径 */
@@ -23,7 +25,7 @@ export function listImages(root: string, maxDepth = 4): LocalImage[] {
       const path = rel ? `${rel}/${n}` : n
       const st = statSync(abs)
       if (st.isDirectory()) { if (depth < maxDepth) walk(abs, path, depth + 1) }
-      else if (st.isFile() && IMAGE_EXT.test(n)) out.push({ file: n, path, abs })
+      else if (st.isFile() && MEDIA_EXT.test(n)) out.push({ file: n, path, abs })
     }
   }
   walk(root, '', 0)

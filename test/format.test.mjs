@@ -74,3 +74,19 @@ test('检查结果写明：没写时长 / 画幅的组，批量生成会按 5 �
   assert.match(text, /1\. .*｜12s｜缺画幅（按 16:9 出）/)
   assert.match(text, /2\. .*｜10s｜9:16/)
 })
+
+test('「视频N」「音频N」登记：各自只配同类文件；音频与角色同名算这个角色的声音参考（与灵环平台同一规则）', () => {
+  const doc = ['第1组 电梯', '图1：程野，锁定面貌。', '视频1：电梯门开合，参考节奏。', '音频1：程野，音色参考。', '时长：10秒。', '画幅：9:16竖屏。', '【画面内容】', '图1 进电梯，节奏照视频1。'].join('\n')
+  const r = checkStoryboard(doc, [
+    { file: '程野.png', path: '角色/程野.png' },
+    { file: '程野.mp3', path: '角色/程野.mp3' },
+    { file: '电梯门开合.mp4', path: '场景/电梯门开合.mp4' },
+  ])
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.missing, [])
+  assert.deepEqual(r.groups[0].refs.map((x) => [x.media ?? 'image', x.name, x.image, x.kind]), [
+    ['image', '程野', '角色/程野.png', 'roles'],
+    ['video', '电梯门开合', '场景/电梯门开合.mp4', 'scenes'],
+    ['audio', '程野', '角色/程野.mp3', 'roles'],
+  ])
+})
