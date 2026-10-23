@@ -48,15 +48,15 @@ test('check + pack：按名称配图、分进角色 / 场景文件夹、缺图�
 
   const checked = await defs.get('aura_batch_check').execute({ storyboard: join(dir, '甲方是我前任-第01集-分镜提示词.md'), references: join(dir, 'refs') }, exec())
   assert.equal(checked.ok, true)
-  assert.deepEqual(checked.missing, ['程小满'])
+  assert.deepEqual(checked.missing, [], '程小满有描述，按提示词生成、不算缺图')
   const text = defs.get('aura_batch_check').output.render({ references: 'refs' }, checked)[0].text
   assert.match(text, /可以导入：2 组/)
-  assert.match(text, /缺图：程小满/)
+  assert.match(text, /程小满（按提示词生成）/)
 
   const assets = [{ name: '朝暮电梯厅', file: join(dir, 'refs', '电梯厅.jpg') }]
   const packed = await defs.get('aura_batch_pack').execute({ storyboard: join(dir, '甲方是我前任-第01集-分镜提示词.md'), references: join(dir, 'refs'), assets }, exec())
   assert.equal(packed.output, join(dir, '甲方是我前任-第01集-全套.zip'))
-  assert.deepEqual(packed.missing, ['程小满'])
+  assert.deepEqual(packed.missing, [])
   const files = readZip(readFileSync(packed.output))
   assert.deepEqual(files.map((f) => f.path), [
     '甲方是我前任-第01集-分镜提示词.md',
@@ -66,7 +66,7 @@ test('check + pack：按名称配图、分进角色 / 场景文件夹、缺图�
   ])
   assert.equal(files[0].data.toString('utf8'), STORY)
   assert.equal(files[1].data[32], 1)
-  assert.match(defs.get('aura_batch_pack').output.render({}, packed)[0].text, /放入参考图 3 张，缺图 1 个：程小满/)
+  assert.match(defs.get('aura_batch_pack').output.render({}, packed)[0].text, /放入参考图 3 张/)
 })
 
 test('pack：没有任何一组时报错，不写文件', async () => {

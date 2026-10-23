@@ -55,7 +55,8 @@ test('整份检查：丢掉的开头、缺画幅、未登记的图N、配图与�
   assert.equal(r.ok, true)
   assert.equal(r.groups.length, 2)
   assert.ok(r.warnings.some((w) => w.includes('之前有 1 行文字')))
-  assert.deepEqual(r.missing, ['程小满'])
+  assert.deepEqual(r.missing, [], '程小满有描述，按提示词生成、不算缺图')
+  assert.ok(r.names.find((n) => n.name === '程小满').generate?.prompt, '描述就当提示词用')
   assert.deepEqual(r.names.map((n) => [n.name, n.kind]), [['程野', 'roles'], ['野芒工作室', 'scenes'], ['程小满', 'roles'], ['朝暮电梯厅', 'scenes']])
   const [g1, g2] = r.groups
   assert.deepEqual([g1.duration, g1.ratio], ['10s', '16:9'])

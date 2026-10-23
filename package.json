@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-aura-batch",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DeepSeek Harness 插件：把剧本与参考素材整理成灵环 TV「导入分镜与参考素材」可直接导入的格式（分镜文档 + 参考图 zip），并检查、打包",
   "license": "MIT",
   "author": "Little-Z7",

@@ -12,7 +12,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { extname } from 'node:path'
-import { checkStoryboard, classifyRef, KIND_LABEL, matchImage, mediaOfFile, type AssetKind, type CheckResult } from './format.js'
+import { canGenerate, checkStoryboard, classifyRef, KIND_LABEL, matchImage, mediaOfFile, type AssetKind, type CheckResult } from './format.js'
 import { isLandscape, type LocalImage } from './images.js'
 import type { ZipEntry } from './zip.js'
 
@@ -66,7 +66,8 @@ export function buildPackage(input: PackInput, read: (abs: string) => Buffer = (
   const warnings: string[] = []
   const explicit = new Map((input.assets ?? []).map((a) => [a.name.trim(), a]))
   for (const a of input.assets ?? []) {
-    if (!check.names.some((n) => n.name === a.name.trim())) warnings.push(`指定了「${a.name}」的图，但分镜里没有「图N：${a.name}」，没有打进包`)
+    const hit = check.names.find((n) => n.name === a.name.trim())
+    if (!hit) warnings.push(`指定了「${a.name}」的图，但分镜里没有「图N：${a.name}」，没有打进包`)
   }
 
   const placed: Placed[] = []
@@ -77,7 +78,11 @@ export function buildPackage(input: PackInput, read: (abs: string) => Buffer = (
     /* 图片名称只配图片、音频名称只配音频（「程野.png」与「程野.mp3」各归各的） */
     const auto = ex ? undefined : matchImage(n.name, input.images.filter((i) => mediaOfFile(i.file) === (n.media ?? 'image')))
     const from = ex?.abs ?? auto?.abs
-    if (!from) { missing.push(n.name); continue }
+    /* 「只有提示词的参考」不需要文件：图片有提示词 / 描述、音频有台词，导入后平台按提示词生成（视频不能生成，check 已经拦住） */
+    if (!from) {
+      if (!canGenerate((n.media ?? 'image') as 'image' | 'video' | 'audio', n.generate)) missing.push(n.name)
+      continue
+    }
     const kind = ex?.kind ?? (ex
       ? classifyRef({ name: n.name, line: n.line, ...(landscapeOf({ abs: ex.abs, path: ex.abs }) !== undefined ? { landscape: landscapeOf({ abs: ex.abs, path: ex.abs })! } : {}) })
       : n.kind)

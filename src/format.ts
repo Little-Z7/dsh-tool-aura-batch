@@ -11,6 +11,8 @@
  */
 
 /** 每个镜头最多挂几张参考图（平台上限） */
+import { parseStoryboardLoose } from './loose.js'
+
 export const MAX_SHOT_REFS = 9
 /** 单批组数上限 */
 export const BATCH_GROUPS_MAX = 100
@@ -47,6 +49,8 @@ export interface Group {
   ratio?: string
   refs: RefSlot[]
   issues: string[]
+  /** 「类型:编号」→ 那一行登记的全部内容（兼容模式的全篇登记才有；组内登记的用 refLine 现取） */
+  refLines?: Record<string, string>
 }
 
 export interface ParseResult {
@@ -254,7 +258,26 @@ export function matchImage<T extends ImageRef>(name: string, images: readonly T[
 export function refLine(prompt: string, slot: number, media: 'image' | 'video' | 'audio' = 'image'): string {
   const word = media === 'video' ? '视频' : media === 'audio' ? '音频' : '图'
   const m = new RegExp(`^[ \\t]*${word}\\s*${slot}\\s*[：:]\\s*(.+)$`, 'mu').exec(prompt)
+    /* 兼容模式的宽松登记（「【图1】程野，…」「图1 程野，…」「参考：图1 程野」）：与平台 tvImport.ts 的 refLine 逐字一致 */
+    ?? new RegExp(`(?:^|[\\s：:、，,；;])@?[【[]?${word}\\s*${slot}(?!\\d)[】\\]]?\\s*[：:=＝\\-—．.、]?\\s*(.+)$`, 'mu').exec(prompt)
   return m ? m[1]!.trim() : ''
+}
+
+/** 登记行里能拿来生成的内容 —— 逐字照搬平台 tvImport.ts 的 genSpecOf。视频不按提示词生成（返回 undefined） */
+export interface GenerateSpec { prompt: string; voice?: { text: string; hint?: string } }
+export function genSpecOf(line: string, name: string, media: 'image' | 'video' | 'audio'): GenerateSpec | undefined {
+  if (media === 'video') return undefined
+  const LABELS = '提示词|台词|文本|内容|音色|声音|声线'
+  const seg = (labels: string) => new RegExp(`(?:${labels})\\s*[：:]\\s*(.+?)(?=\\s*[｜|]|[，,；;。\\s]*(?:${LABELS})\\s*[：:]|$)`, 'u').exec(line)?.[1]?.trim()
+  if (media === 'audio') {
+    const text = seg('台词|文本|内容')
+    if (!text) return undefined
+    const hint = seg('音色|声音|声线')
+    return { prompt: text, voice: { text, ...(hint ? { hint } : {}) } }
+  }
+  const rest = (line.startsWith(name) ? line.slice(name.length) : line).replace(/^[，,、；;。\\s｜|]+/u, '').trim()
+  const prompt = seg('提示词') ?? rest
+  return prompt ? { prompt } : undefined
 }
 
 const ROLE_DIR = /(^|\/)(角色|人物|人设|演员|characters?|roles?)(\/|$)/iu
@@ -326,6 +349,8 @@ export function sectionsOf(prompt: string): Partial<Record<ShotColumn, string>> 
 export interface CheckedRef extends RefSlot {
   /** 配上的参考图（相对路径）；没提供参考图目录时为空 */
   image?: string
+  /** 「待生成」的参考：按提示词 / 台词补出，不需要文件 */
+  generate?: RefGenerate
   kind: AssetKind
 }
 
@@ -341,35 +366,54 @@ export interface CheckedGroup {
 }
 
 export interface CheckResult {
-  splitBy: SplitBy
+  splitBy: string
+  /** 走了兼容模式才有：这次用的切法与备选切法 */
+  compat?: { split: string; options: string[] }
+  /** 有从全篇登记挂上参考的镜头数 */
+  inherited?: number
   groups: CheckedGroup[]
   /** 全集的参考名称（出现顺序） */
-  names: Array<{ name: string; line: string; image?: string; kind: AssetKind; media?: 'video' | 'audio' }>
-  /** 提供了参考图目录、但配不上图的名称 */
+  names: Array<{ name: string; line: string; image?: string; kind: AssetKind; media?: 'video' | 'audio'; generate?: RefGenerate }>
+  /** 提供了参考图目录、但既配不上文件也不能按提示词生成的名称 */
   missing: string[]
   /** 整份文件层面的提醒 */
   warnings: string[]
-  /** 能不能导入：至少有一组、且没有超长的组 */
+  /** 硬性错误（缺台词的音频、按提示词生成的参考视频）：有就 ok=false */
+  errors: string[]
+  /** 能不能导入：至少有一组、没有超长的组、没有硬性错误 */
   ok: boolean
 }
 
+export type RefGenerate = GenerateSpec
+
+/** 这条参考会不会是「待生成」的（与平台 planImport 同一判定：genSpecOf 给出 spec 就能生成） */
+export function canGenerate(_media: 'image' | 'video' | 'audio', gen: RefGenerate | undefined): boolean {
+  return Boolean(gen)
+}
+
 /**
- * 按平台规则检查一份整集分镜文档。传了 `images` 才核对参考图是否配得上。
- * `landscapeOf` 给出某张图是不是横图（归类的最后一道判断），量不出来可以不传。
+ * 按平台规则检查一份整集分镜文档（认不出模板时走兼容模式，与平台 looseParse 同一套切法）。
+ * 传了 `images` 才核对参考图是否配得上。`landscapeOf` 给出某张图是不是横图（归类的最后一道判断），量不出来可以不传。
  */
 export function checkStoryboard(
   text: string,
   images?: readonly ImageRef[],
   landscapeOf?: (image: ImageRef) => boolean | undefined,
+  /** 换一套分组来源（表格走 loose.parseStoryboardTable 的结果），缺省是文本入口 */
+  parse?: () => ReturnType<typeof parseStoryboardLoose>,
 ): CheckResult {
-  const parsed = parseStoryboard(text)
+  const strict = parseStoryboard(text)
+  const parsed = parse ? parse() : parseStoryboardLoose(text, strict)
   const warnings = [...parsed.warnings]
   if (!parsed.groups.length) warnings.push('没有读到任何一组提示词')
-  if (parsed.droppedHead) warnings.push(`第一个「第N组」标题之前有 ${parsed.droppedHead} 行文字，平台导入时会丢掉；要保留就挪进某一组里`)
-  if (parsed.splitBy === 'single' && parsed.groups.length === 1 && parsed.groups[0]!.prompt.length > 3000) {
+  if (!parsed.compat && strict.droppedHead) warnings.push(`第一个「第N组」标题之前有 ${strict.droppedHead} 行文字，平台导入时会丢掉；要保留就挪进某一组里`)
+  if (parsed.compat?.split === 'single' && parsed.groups.length === 1 && parsed.groups[0]!.prompt.length > 3000) {
     warnings.push('整份文件只切出一组；要分成多条视频，每组前加「# 第N组 标题」或单独一行 ---')
   }
+  const errors: string[] = []
   const names: CheckResult['names'] = []
+  /* 平台 planImport 的 generated 回填：某镜「图2：苏晚｜提示词：…」待生成，别镜只写「图2 苏晚」的复用同一份 */
+  const generateByKey = new Map<string, RefGenerate>()
   const groups = parsed.groups.map((g): CheckedGroup => {
     const issues = [...g.issues]
     if (!g.duration) issues.push('没写时长（在【N秒本组总控】里写「时长：N秒。」），导入后要在分镜表里补')
@@ -380,17 +424,31 @@ export function checkStoryboard(
     if (undeclared.length) issues.push(`正文提到 ${undeclared.map((s) => `图${s}`).join('、')}，但【参考素材分工】里没有「图N：名称」那一行，这些不会挂参考`)
     const refs = g.refs.map((r): CheckedRef => {
       const media = r.media ?? 'image'
-      const line = refLine(g.prompt, r.slot, media)
+      const key = `${media}:${r.slot}`
+      /* 登记行：平台 planImport 的 lineOf 口径 —— 有 refLines 用 refLines，否则 refLine(group.prompt, …) */
+      const line = g.refLines && key in g.refLines ? g.refLines[key]! : refLine(g.prompt, r.slot, media)
       const pool = images?.filter((i) => mediaOfFile(i.file) === media)
       const image = pool ? matchImage(r.name, pool) : undefined
+      /* 与平台 planImport 同一顺序：配不上文件才算 spec（配上了就按文件走，不看提示词） */
+      const spec = image ? undefined : genSpecOf(line, r.name, media)
+      /* 插件比平台更严的两条提示（平台是缺文件，不报错）：配不上文件、写了音色 / 提示词却没台词的音频、写提示词的参考视频 */
+      const GEN_MARK = /(?:提示词|台词|文本|内容|音色|声音|声线)\s*[：:]/u
+      if (!image && media === 'video' && GEN_MARK.test(line)) {
+        errors.push(`视频${r.slot}「${r.name}」不能按提示词生成，必须配视频文件`)
+      }
+      if (!image && media === 'audio' && GEN_MARK.test(line) && !spec) {
+        errors.push(`音频${r.slot}「${r.name}」写了音色 / 提示词却没有台词：导入后按缺文件处理、合成不了，补上「｜台词：…」或配音频文件`)
+      }
+      const generate = spec
       /* 音频与某个角色同名 = 这个角色的声音参考（平台导入后挂到角色上）；其余音频算道具一类 */
       const kind = r.media === 'audio'
         ? (names.some((n) => n.name === r.name && !n.media && n.kind === 'roles') ? 'roles' as const : 'props' as const)
         : classifyRef({ name: r.name, line, ...(image ? { path: image.path } : {}), ...(image && media === 'image' && landscapeOf?.(image) !== undefined ? { landscape: landscapeOf(image)! } : {}) })
       if (!names.some((n) => n.name === r.name && (n.media ?? 'image') === media)) {
-        names.push({ name: r.name, line, ...(image ? { image: image.path } : {}), kind, ...(r.media ? { media: r.media } : {}) })
+        names.push({ name: r.name, line, ...(image ? { image: image.path } : {}), kind, ...(r.media ? { media: r.media } : {}), ...(generate ? { generate } : {}) })
       }
-      return { ...r, ...(image ? { image: image.path } : {}), kind }
+      if (generate) generateByKey.set(`${media}:${r.name}`, generate)
+      return { ...r, ...(image ? { image: image.path } : {}), ...(generate ? { generate } : {}), kind }
     })
     const cols = sectionsOf(g.prompt)
     const columns = (Object.keys(cols) as ShotColumn[]).map((column) => {
@@ -399,7 +457,16 @@ export function checkStoryboard(
     })
     return { index: g.index, title: g.title, ...(g.duration ? { duration: g.duration } : {}), ...(g.ratio ? { ratio: g.ratio } : {}), refs, columns, issues }
   })
-  const missing = images ? names.filter((n) => !n.image).map((n) => n.name) : []
-  const ok = groups.length > 0 && !parsed.groups.some((g) => g.prompt.length > BATCH_PROMPT_MAX)
-  return { splitBy: parsed.splitBy, groups, names, missing, warnings, ok }
+  for (const n of names) {
+    const spec = !n.image && !n.generate ? generateByKey.get(`${n.media ?? 'image'}:${n.name}`) : undefined
+    if (spec) n.generate = spec
+  }
+  const missing = images ? names.filter((n) => !n.image && !n.generate).map((n) => n.name) : []
+  const ok = groups.length > 0 && !errors.length && !parsed.groups.some((g) => g.prompt.length > BATCH_PROMPT_MAX)
+  return {
+    splitBy: parsed.splitBy,
+    ...(parsed.compat ? { compat: parsed.compat } : {}),
+    ...(parsed.inherited ? { inherited: parsed.inherited } : {}),
+    groups, names, missing, warnings, errors, ok,
+  }
 }

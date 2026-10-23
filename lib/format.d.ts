@@ -10,6 +10,7 @@
  * @module dsh-tool-aura-batch/format
  */
 /** 每个镜头最多挂几张参考图（平台上限） */
+import { parseStoryboardLoose } from './loose.js';
 export declare const MAX_SHOT_REFS = 9;
 /** 单批组数上限 */
 export declare const BATCH_GROUPS_MAX = 100;
@@ -46,6 +47,8 @@ export interface Group {
     ratio?: string;
     refs: RefSlot[];
     issues: string[];
+    /** 「类型:编号」→ 那一行登记的全部内容（兼容模式的全篇登记才有；组内登记的用 refLine 现取） */
+    refLines?: Record<string, string>;
 }
 export interface ParseResult {
     groups: Group[];
@@ -92,6 +95,15 @@ export interface ImageRef {
 export declare function matchImage<T extends ImageRef>(name: string, images: readonly T[]): T | undefined;
 /** 「图N：…」那一整行（冒号后面的全部），找不到给空串 */
 export declare function refLine(prompt: string, slot: number, media?: 'image' | 'video' | 'audio'): string;
+/** 登记行里能拿来生成的内容 —— 逐字照搬平台 tvImport.ts 的 genSpecOf。视频不按提示词生成（返回 undefined） */
+export interface GenerateSpec {
+    prompt: string;
+    voice?: {
+        text: string;
+        hint?: string;
+    };
+}
+export declare function genSpecOf(line: string, name: string, media: 'image' | 'video' | 'audio'): GenerateSpec | undefined;
 /** 参考图归角色、场景还是道具：文件夹名 → 名称结尾 → 描述用词 → 横竖（横图算场景）；与平台导入时同一套判断 */
 export declare function classifyRef(ref: {
     name: string;
@@ -106,6 +118,8 @@ export declare function sectionsOf(prompt: string): Partial<Record<ShotColumn, s
 export interface CheckedRef extends RefSlot {
     /** 配上的参考图（相对路径）；没提供参考图目录时为空 */
     image?: string;
+    /** 「待生成」的参考：按提示词 / 台词补出，不需要文件 */
+    generate?: RefGenerate;
     kind: AssetKind;
 }
 export interface CheckedGroup {
@@ -124,7 +138,14 @@ export interface CheckedGroup {
     issues: string[];
 }
 export interface CheckResult {
-    splitBy: SplitBy;
+    splitBy: string;
+    /** 走了兼容模式才有：这次用的切法与备选切法 */
+    compat?: {
+        split: string;
+        options: string[];
+    };
+    /** 有从全篇登记挂上参考的镜头数 */
+    inherited?: number;
     groups: CheckedGroup[];
     /** 全集的参考名称（出现顺序） */
     names: Array<{
@@ -133,16 +154,24 @@ export interface CheckResult {
         image?: string;
         kind: AssetKind;
         media?: 'video' | 'audio';
+        generate?: RefGenerate;
     }>;
-    /** 提供了参考图目录、但配不上图的名称 */
+    /** 提供了参考图目录、但既配不上文件也不能按提示词生成的名称 */
     missing: string[];
     /** 整份文件层面的提醒 */
     warnings: string[];
-    /** 能不能导入：至少有一组、且没有超长的组 */
+    /** 硬性错误（缺台词的音频、按提示词生成的参考视频）：有就 ok=false */
+    errors: string[];
+    /** 能不能导入：至少有一组、没有超长的组、没有硬性错误 */
     ok: boolean;
 }
+export type RefGenerate = GenerateSpec;
+/** 这条参考会不会是「待生成」的（与平台 planImport 同一判定：genSpecOf 给出 spec 就能生成） */
+export declare function canGenerate(_media: 'image' | 'video' | 'audio', gen: RefGenerate | undefined): boolean;
 /**
- * 按平台规则检查一份整集分镜文档。传了 `images` 才核对参考图是否配得上。
- * `landscapeOf` 给出某张图是不是横图（归类的最后一道判断），量不出来可以不传。
+ * 按平台规则检查一份整集分镜文档（认不出模板时走兼容模式，与平台 looseParse 同一套切法）。
+ * 传了 `images` 才核对参考图是否配得上。`landscapeOf` 给出某张图是不是横图（归类的最后一道判断），量不出来可以不传。
  */
-export declare function checkStoryboard(text: string, images?: readonly ImageRef[], landscapeOf?: (image: ImageRef) => boolean | undefined): CheckResult;
+export declare function checkStoryboard(text: string, images?: readonly ImageRef[], landscapeOf?: (image: ImageRef) => boolean | undefined, 
+/** 换一套分组来源（表格走 loose.parseStoryboardTable 的结果），缺省是文本入口 */
+parse?: () => ReturnType<typeof parseStoryboardLoose>): CheckResult;
